@@ -1,5 +1,7 @@
 # xnulinux
 
+How this project differs to original: Attempting to get this working on my X1P laptop, project may end prematurely due to lack of access to a silicon Mac
+
 Run macOS userspace on Linux by loading the macOS kernel into it.
 
 xnulinux builds XNU, the open-source kernel of macOS, from Apple's published sources and runs it as a loadable kernel
