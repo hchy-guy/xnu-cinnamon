@@ -41,6 +41,7 @@ enum linux64_call {
 	LINUX64_CALL_HOSTCALL       = 830,	/* a1 = struct linux64_hostcall_req: a message to a Linux service and its reply */
 	LINUX64_CALL_CPU_START      = 840,	/* a1 = a CPU's MPIDR, a2 = its cpu_data_t: the host enters linux64_cpu_entry(a2) there */
 	LINUX64_CALL_IPI            = 841,	/* a1 = the target CPU's MPIDR: its linux64_ipi_pending slot is set; make it look */
+	LINUX64_CALL_HALT           = 992,	/* a1 = 1 restart, 0 halt: the hosted system shut down (halt_all_cpus); the run ends */
 	LINUX64_CALL_CONSOLE_READ   = 993,	/* a1 = struct linux64_buf_req: console input bytes */
 	LINUX64_CALL_RAMDISK_RW     = 994,	/* a1 = struct linux64_rw_req on the host-file md disk */
 	LINUX64_CALL_RAMDISK_SIZE   = 995,	/* a1 = u64 *: the host-file md disk's size, 0 when there is none */

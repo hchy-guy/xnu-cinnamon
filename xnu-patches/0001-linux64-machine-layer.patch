@@ -3,8 +3,8 @@ The LINUX64 machine layer: XNU hosted inside a Linux kernel by xnu.ko.
 The CPU, MMU and exceptions are Linux's: XNU runs at EL1 on Linux's page tables (its kernel L1 entries installed by the
 host), with hardware interrupts masked and a virtual interrupt flag; exceptions are taken in Linux's vectors and handed
 back (kernel faults to linux64_kernel_fault, user space through linux64_el0_run/linux64_el0_exception). Idle, timers,
-the console, printf/kprintf, panics and failed asserts go to the host; entropy comes from the host until corecrypto
-registers. Every hosted path is behind `if (linux64_hook)`: the same kernel still boots on hardware.
+the console, printf/kprintf, panics, failed asserts and a halt or restart go to the host; entropy comes from the host
+until corecrypto registers. Every hosted path is behind `if (linux64_hook)`: the same kernel still boots on hardware.
 
 The interface to the host is linux64/linux64_abi.h (shared with xnu.ko) and linux64/linux64.h, copied into
 EXTERNAL_HEADERS/linux64 from xnu-patches/include by scripts/vm-xnu-rebuild.sh.
@@ -1381,7 +1381,7 @@ index 13d2819..1837c6a 100644
  
  	mrs		x1, MPIDR_EL1
 diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
-index f456377..b66afca 100644
+index f456377..3fdc51c 100644
 --- a/osfmk/arm64/machine_routines.c
 +++ b/osfmk/arm64/machine_routines.c
 @@ -27,6 +27,7 @@
@@ -1427,7 +1427,21 @@ index f456377..b66afca 100644
  	MRS(value, "DAIF");
  	if ((value & DAIF_STANDARD_DISABLE) == DAIF_STANDARD_DISABLE) {
  		return FALSE;
-@@ -1367,7 +1382,9 @@ ml_parse_cpu_topology(void)
+@@ -934,6 +949,13 @@ halt_all_cpus(boolean_t reboot)
+ 		printf("CPU halted\n");
+ 		PEHaltRestart(kPEHaltCPU);
+ 	}
++	if (linux64_hook) {
++		/*
++		 * LINUX64 (xnulinux): hosted, spinning here keeps this Linux CPU with its interrupts masked for good (Linux
++		 * soft-locks). The host ends the run instead and says whether the system asked for a restart.
++		 */
++		linux64_call2(LINUX64_CALL_HALT, reboot ? 1 : 0, 0);
++	}
+ 	while (1) {
+ 		;
+ 	}
+@@ -1367,7 +1389,9 @@ ml_parse_cpu_topology(void)
  	assert(((tpidr_el0 & MACHDEP_TPIDR_CLUSTERID_MASK) >> MACHDEP_TPIDR_CLUSTERID_SHIFT) == boot_cpu->cluster_id);
  	__builtin_arm_wsr64("TPIDR_EL0", tpidr_el0);
  
@@ -1438,7 +1452,7 @@ index f456377..b66afca 100644
  }
  
  const ml_topology_info_t *
-@@ -2529,6 +2546,12 @@ ml_set_decrementer(uint32_t dec_value)
+@@ -2529,6 +2553,12 @@ ml_set_decrementer(uint32_t dec_value)
  		}
  	}
  
@@ -2052,7 +2066,7 @@ diff --git a/osfmk/kern/link_compat.c b/osfmk/kern/link_compat.c
 index e494eab..fc40514 100644
 --- a/osfmk/kern/link_compat.c
 +++ b/osfmk/kern/link_compat.c
-@@ -65,3 +65,21 @@ native_verified_block_manifest_sha384(unsigned int device, const char *uuid, uin
+@@ -65,3 +65,40 @@ native_verified_block_manifest_sha384(unsigned int device, const char *uuid, uin
  }
  
  #endif
@@ -2073,6 +2087,25 @@ index e494eab..fc40514 100644
 +os_metric_coprocessor(void)
 +{
 +	return 0;
++}
++
++/*
++ * LINUX64 (xnulinux): the two functions of compiler-rt's profile runtime that OSKext's kext PGO collection calls. Without
++ * them the link takes the runtime's objects from the toolchain's libclang_rt.cc_kext archive, Apple's binary. No kext
++ * here is built with profiling; one that is gets size 0 and EIO.
++ */
++uint64_t __llvm_profile_get_size_for_buffer_internal(void);
++uint64_t
++__llvm_profile_get_size_for_buffer_internal(void)
++{
++	return 0;
++}
++
++int __llvm_profile_write_buffer_internal(void);
++int
++__llvm_profile_write_buffer_internal(void)
++{
++	return -1;
 +}
 diff --git a/osfmk/kern/printf.c b/osfmk/kern/printf.c
 index 2fc6931..d581670 100644

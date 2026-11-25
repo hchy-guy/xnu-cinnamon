@@ -161,6 +161,12 @@ void fki_random(void *buf, unsigned long len)
 }
 EXPORT_SYMBOL(fki_random);
 
+int fki_random_wait(void)
+{
+	return wait_for_random_bytes();
+}
+EXPORT_SYMBOL(fki_random_wait);
+
 int fki_bind_cpu(int cpu)
 {
 	if (cpu < 0 || cpu >= nr_cpu_ids || !cpu_online(cpu))

@@ -3,6 +3,7 @@
 # Inside the arm64 Ubuntu VM: the DroidVM Linux toolchain (native compile, no Darling: the kernel build does not need it)
 # and the xnu-12377 kernel from source.
 set -ex
+POC=$(cd "$(dirname "$0")/.." && pwd)
 export DEBIAN_FRONTEND=noninteractive
 if [ ! -x /usr/lib/llvm-21/bin/clang ]; then
   wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
@@ -28,23 +29,34 @@ if k in s and 'aarch64-linux-gnu' not in s:
     s=s.replace(k, k.replace("'\\n'.join(lines)", "'\\n'.join(lines).replace('x86_64-linux-gnu', 'aarch64-linux-gnu')"))
     open(p,'w').write(s)
 PY
-# cctools' foreign mach/machine headers know x86 only; host tools (kextsymboltool, ...) only need LP64 types
-for f in $(grep -rl -E 'defined *\(__x86_64__\)' toolchains/linux/cctools-work/cctools/include/foreign); do
-  grep -q __aarch64__ $f || sed -i 's/defined *(__x86_64__)/defined(__x86_64__) || defined(__aarch64__)/g' $f
-done
-T=toolchains/linux/cctools-work/cctools/include/foreign/mach/thread_status.h
-grep -q 'xnupoc' $T || sed -i 's|^typedef\tnatural_t\tthread_state_data_t\[THREAD_STATE_MAX\];|#ifndef THREAD_STATE_MAX /* xnupoc: aarch64 host */\n#define THREAD_STATE_MAX 144\n#endif\n&|' $T
-grep -n -B3 'thread_state_data_t\[' $T
+# cctools' foreign mach/machine headers know x86 only; host tools (kextsymboltool, ...) only need LP64 types.
+# Patched once the toolchain step has fetched them.
+patch_cctools() {
+  local d f T
+  for d in $(find toolchains -type d -path '*/cctools/include/foreign' 2>/dev/null); do
+    for f in $(grep -rl -E 'defined *\(__x86_64__\)' "$d"); do
+      grep -q __aarch64__ "$f" || sed -i 's/defined *(__x86_64__)/defined(__x86_64__) || defined(__aarch64__)/g' "$f"
+    done
+    T=$d/mach/thread_status.h
+    grep -q 'xnupoc' "$T" || sed -i 's|^typedef\tnatural_t\tthread_state_data_t\[THREAD_STATE_MAX\];|#ifndef THREAD_STATE_MAX /* xnupoc: aarch64 host */\n#define THREAD_STATE_MAX 144\n#endif\n&|' "$T"
+    grep -n -B3 'thread_state_data_t\[' "$T"
+  done
+}
 python3 scripts/setup-env.py toolchain --jobs 12
-# decomment keeps getc() in a char: EOF never matches where char is unsigned (aarch64) and it spins forever
-D=out/k27/xnu/SETUP/decomment/decomment.c
-[ -f $D ] && sed -i 's/^\tchar bufchar;/\tint bufchar;/' $D && grep -n 'bufchar;' $D && rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
-pkill -x decomment || true
+patch_cctools
 # libclang_rt.cc_kext comes from the CLTools package (unpacked only; Darling is not needed for it)
 A=toolchains/linux/appleclang; mkdir -p $A
 python3 compat/xnu-linux/scripts/setup-appleclang.py fetch --directory $A
 [ -d $A/apple-tools ] || python3 compat/xnu-linux/scripts/setup-appleclang.py extract --directory $A
 ls $A/apple-tools/Library/Developer/CommandLineTools/usr/lib/clang/*/lib/darwin/ | grep cc_kext
+# the k27 tree first (setup-env's x12377 step makes it and runs its installhdrs at once), for decomment: it keeps getc()
+# in a char, so EOF never matches where char is unsigned (aarch64) and it spins forever
+python3 -c "import importlib.util as u; s = u.spec_from_file_location('setup_env', 'scripts/setup-env.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.kernel_tree()"
+D=out/k27/xnu/SETUP/decomment/decomment.c
+sed -i -E 's/^([[:space:]]*)char([[:space:]]+bufchar;)/\1int\2/' $D
+grep -qE '^[[:space:]]*int[[:space:]]+bufchar;' $D || { echo "decomment.c: no int bufchar after the patch" >&2; exit 1; }
+rm -f out/x12377/build/xnu/hdrs-obj/SETUP/decomment/decomment
 python3 scripts/setup-env.py x12377 --jobs 12
-JOBS=12 bash k27/build-kernel27.sh 2>&1 | tail -30
-ls -la out/k27/kernel-k27.macho
+# the first kernel build is the rebuild's: xnu-patches and xnulinux's corecrypto go into the tree before anything of it
+# is compiled (XNU's own corecrypto never is)
+bash "$POC"/scripts/vm-xnu-rebuild.sh

@@ -16,7 +16,7 @@ RAM_MB=${RAM_MB:-7900}	# its memory, within fki's carve-out
 #DISK=/var/tmp/mac.img
 GPU=${GPU:-auto}	# auto: the host GPU when the VM has a render node; off: CPU rendering only
 #XNU_ARGS="model=VirtualMac2,1"
-#BOOTARGS="amfi_get_out_of_my_way=1 lp-sip0=2050"
+#BOOTARGS="amfi_get_out_of_my_way=1 lp-sip0=2050 bt-transport-override=10"
 CONF
 sudo tee /etc/systemd/system/xnulinux.service >/dev/null <<UNIT
 [Unit]

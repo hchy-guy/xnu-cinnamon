@@ -54,6 +54,8 @@ void fki_pac_swap(const struct fki_pac_keys *load, struct fki_pac_keys *save);
 fki_u64 fki_counter_frequency(void);
 fki_u64 fki_counter(void);
 void fki_random(void *buf, unsigned long len);
+/* sleeps until Linux's generator is seeded (process context): 0, or -errno when a signal comes first */
+int fki_random_wait(void);
 /*
  * Physically contiguous memory with real physical addresses (for a foreign kernel whose own page tables
  * the hardware walks). va is a kernel linear-map address (RW, not executable). size rounds up to a power of two.

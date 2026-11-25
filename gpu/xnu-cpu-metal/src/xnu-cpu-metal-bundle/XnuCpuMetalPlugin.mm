@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <os/lock.h>
 #include <objc/message.h>
 // XnuCpuMetal.bundle — Pure-CPU Metal plugin for xnulinux (macOS 27).
 // Principal class: XnuCpuMetalDevice (subclass of IOGPUMetalDevice).
@@ -2390,8 +2391,30 @@ static NSUInteger xcmDev_rwTexTier(id, SEL) { return MTLReadWriteTextureTier2; }
 static BOOL xcmDev_yes(id, SEL) { return YES; }
 static BOOL xcmDev_supportsSampleCount(id, SEL, NSUInteger c) { return c == 1; }
 static BOOL xcmDev_supportsFeatureSet(id, SEL, NSUInteger) { return YES; }
+// A device's families do not change, and the bridge audits its whole format table to answer for one. Metal asks
+// several times for every MTLPixelFormatGetInfoForDevice, which CoreAnimation calls for each surface it makes: half of
+// WindowServer's time in a display update went there. Each answer is kept (per device, a handful of families).
+static bool xcmBridgeSupportsFamily(int64_t family) {
+    static os_unfair_lock lock = OS_UNFAIR_LOCK_INIT;
+    static const void *dev;
+    static struct { int64_t family; bool yes; } known[32];
+    static unsigned n;
+    const void *d = gXm2vDevice;
+    if (!d) return false;
+    os_unfair_lock_lock(&lock);
+    if (dev != d) { dev = d; n = 0; }
+    for (unsigned i = 0; i < n; i++) {
+        if (known[i].family == family) { bool yes = known[i].yes; os_unfair_lock_unlock(&lock); return yes; }
+    }
+    os_unfair_lock_unlock(&lock);
+    bool yes = xm2v_device_supports_family(gXm2vDevice, family);
+    os_unfair_lock_lock(&lock);
+    if (dev == d && n < sizeof(known) / sizeof(known[0])) { known[n].family = family; known[n].yes = yes; n++; }
+    os_unfair_lock_unlock(&lock);
+    return yes;
+}
 static BOOL xcmDev_supportsFamily(id, SEL, MTLGPUFamily family) {
-    if (gXm2vDevice && xm2v_device_supports_family(gXm2vDevice, (int64_t)family)) return YES;
+    if (xcmBridgeSupportsFamily((int64_t)family)) return YES;
     // Report Apple1/Apple2, Mac1/Mac2, Common1..3 so QuartzCore enables framebuffer fetch (programmable blending)
     // and standard macOS/Apple GPU paths that lavapipe + metal2vulkan support.
     switch ((int64_t)family) {
