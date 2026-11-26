@@ -22,6 +22,7 @@ directory kclink runs in), start, stop, libraries, personalities, plist (more In
 ({bundle: {personality: {key: value}}}, merged into a kept kext's IOKitPersonalities). Its segments go into space no
 kernel or kept kext uses, first fit. Its symbols, as linked, are written to OUTPUT with suffix .natives.json."""
 import argparse
+import base64
 import json
 import os
 import plistlib
@@ -55,6 +56,43 @@ def fail(msg):
 
 def u64(v):
     return v & 0xffffffffffffffff
+
+
+def prelink_xml(info):
+    """The prelink info as XML with nothing between its elements, the way the kernel writes a dictionary itself
+    (OSSerialize). plistlib indents every element with a tab per level and puts it on a line of its own, which a
+    kernel's prelink info does not have the room for: it ends where the kernel's __KLDDATA starts. The values are
+    those plistlib writes (the same elements, the same order of keys); what comes out is read back and compared."""
+    def esc(text):
+        text = text.replace('\r\n', '\n').replace('\r', '\n')       # as plistlib writes a string
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    def xml(v):
+        if isinstance(v, bool):
+            return '<true/>' if v else '<false/>'
+        if isinstance(v, int):
+            if not -1 << 63 <= v < 1 << 64:
+                fail(f'prelink info: integer {v} out of range')
+            return f'<integer>{v}</integer>'
+        if isinstance(v, str):
+            return f'<string>{esc(v)}</string>'
+        if isinstance(v, (bytes, bytearray)):
+            return f'<data>{base64.b64encode(v).decode()}</data>'
+        if isinstance(v, dict):
+            if not all(isinstance(k, str) for k in v):
+                fail('prelink info: a dictionary key that is not a string')
+            items = ''.join(f'<key>{esc(k)}</key>{xml(v[k])}' for k in sorted(v))
+            return f'<dict>{items}</dict>' if v else '<dict/>'
+        if isinstance(v, (list, tuple)):
+            return f'<array>{"".join(xml(x) for x in v)}</array>' if v else '<array/>'
+        fail(f'prelink info: a value of type {type(v).__name__}')
+
+    indented = plistlib.dumps(info)
+    head = indented[:indented.index(b'<plist')]                     # the XML declaration and the document type
+    out = head + f'<plist version="1.0">{xml(info)}</plist>\n'.encode()
+    if plistlib.loads(out) != plistlib.loads(indented):
+        fail('prelink info: the compact form does not read back as the same dictionary')
+    return out
 
 
 def has_code(d):
@@ -436,7 +474,7 @@ def main():
         entries.append(kx.plist(kx.out[('__DATA', '__data')].addr))
     info = dict(info)
     info['_PrelinkInfoDictionary'] = entries
-    plist = plistlib.dumps(info)
+    plist = prelink_xml(info)
 
     # the collection's segments: BASE's, grown to what is in them; __PRELINK_INFO as large as the prelink info
     pi = regions['__PRELINK_INFO']

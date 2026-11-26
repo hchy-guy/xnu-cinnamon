@@ -14,7 +14,7 @@
 # environment:
 #   DISK (/var/tmp/mac.img)  RAM_MB (7900)  BOOTARGS  CONSOLE_IN (/var/tmp/console-in)  INPUT_IN (/var/tmp/xnu-input)
 #   FB_DUMP (/var/tmp/xnu-fb.raw)  KEYSTORE (/var/tmp/xnu-keystore.bin)  TRUSTCACHE (xnu/trustcache-mac.bin; empty: none)
-#   IMAGE (xnu/kc.bin: the kernel collection under /lib/firmware)  GPU (auto|off)  CPUS (1: the hosted system's CPUs)  XNU_ARGS (more xnu.ko parameters)
+#   IMAGE (xnu/kc.bin: the kernel collection under /lib/firmware)  GPU (auto|off)  CPUS (1: the hosted system's CPUs, 32 at most)  XNU_ARGS (more xnu.ko parameters)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = stop ]; then	# end the running hosted system (its disk synced first) and remove xnu.ko
@@ -84,10 +84,11 @@ if [ "$NCPU" -gt "$CPUS" ]; then
 l = [int(c) for c in '$XCPUS'.split(',') if c][:$CPUS] or list(range($CPUS))
 m = (1 << $NCPU) - 1
 for c in l: m &= ~(1 << c)
-print(format(m, 'x'))")
+h = format(m, 'x')	# Linux reads a CPU mask in comma-separated groups of 32 bits
+print(','.join(reversed([h[max(i - 8, 0):i] for i in range(len(h), 0, -8)])))")
   echo "$MASK" | sudo tee /proc/irq/default_smp_affinity >/dev/null 2>&1 || true
   for f in /proc/irq/*/smp_affinity; do echo "$MASK" | sudo tee "$f" >/dev/null 2>&1 || true; done
-  HOSTCPUS=$(python3 -c "print(','.join(str(c) for c in range($NCPU) if 0x$MASK >> c & 1))")
+  HOSTCPUS=$(python3 -c "print(','.join(str(c) for c in range($NCPU) if 0x${MASK//,/} >> c & 1))")
 fi
 # XNU's CPUs stay out of Linux's deep idle states: a hosted CPU with nothing to run sleeps in Linux, and waking it from
 # one (a thread made runnable on another CPU: every Mach message) took 0.6 ms on average on a DGX Spark, 10 us without.
